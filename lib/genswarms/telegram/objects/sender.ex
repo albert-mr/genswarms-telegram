@@ -3720,7 +3720,14 @@ defmodule Genswarms.Telegram.Objects.Sender do
         state
 
       cur != nil and text in cur.texts ->
-        state
+        update_in(state.held[cid], fn h ->
+          parent = if h.from == from and Map.get(h, :reply_to) == parent, do: parent
+
+          Map.merge(h, %{
+            reply_to: parent,
+            reply_contexts: Enum.uniq(Map.get(h, :reply_contexts, []) ++ reply_contexts)
+          })
+        end)
 
       cur == nil and map_size(state.held) >= @held_cids_max ->
         state

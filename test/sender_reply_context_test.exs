@@ -168,6 +168,43 @@ defmodule Genswarms.Telegram.SenderReplyContextTest do
                      }}
   end
 
+  test "duplicate held text retains distinct native contexts without a mixed-parent tag", %{
+    state: state
+  } do
+    state = inbound(state, @original, 11)
+    other_context = %{@context | reply_to_message_id: 11}
+    {:noreply, state} = Sender.handle_agent_reply(@slot, "first interim", @context, state)
+    {:noreply, state} = Sender.handle_agent_reply(@slot, "second interim", other_context, state)
+    {:noreply, state} = Sender.handle_agent_reply(@slot, "Done", @context, state)
+    {:noreply, state} = Sender.handle_agent_reply(@slot, "Done", other_context, state)
+    {:noreply, state} = Sender.handle_agent_reply(@slot, "Done", @context, state)
+
+    {:noreply, result} = Sender.handle_info({:flush_held, @original}, state)
+    assert [%{payload: %{text: "Done"} = payload} | _] = result.sent
+    refute Map.has_key?(payload, :reply_parameters)
+
+    assert_received {:delivered, %{text: "Done"}, %{ok: true},
+                     %{reply_contexts: [@context, ^other_context], coalesced: true}}
+  end
+
+  test "native context survives deduplication against ordinary held text", %{state: state} do
+    state = bind(state, @original)
+
+    {:noreply, state} =
+      Sender.handle_message(@slot, %{"action" => "reply", "text" => "interim"}, state)
+
+    {:noreply, state} =
+      Sender.handle_message(@slot, %{"action" => "reply", "text" => "Done"}, state)
+
+    {:noreply, state} = Sender.handle_agent_reply(@slot, "Done", @context, state)
+    {:noreply, result} = Sender.handle_info({:flush_held, @original}, state)
+    assert [%{payload: %{text: "Done"} = payload} | _] = result.sent
+    refute Map.has_key?(payload, :reply_parameters)
+
+    assert_received {:delivered, %{text: "Done"}, %{ok: true},
+                     %{reply_contexts: [@context], coalesced: true}}
+  end
+
   test "parent tags are validated only against the captured conversation", %{state: state} do
     for parent <- [nil, 20, 999] do
       {:noreply, result} =
